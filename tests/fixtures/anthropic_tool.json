@@ -1,0 +1,27 @@
+{
+  "model": "claude-sonnet-4-6",
+  "max_tokens": 1024,
+  "messages": [
+    { "role": "user", "content": "Read foo.txt" },
+    {
+      "role": "assistant",
+      "content": [
+        { "type": "text", "text": "Reading the file." },
+        { "type": "tool_use", "id": "toolu_01", "name": "Read", "input": { "path": "foo.txt" } }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        { "type": "tool_result", "tool_use_id": "toolu_01", "content": "hello world" }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "Read",
+      "description": "Read a file",
+      "input_schema": { "type": "object", "properties": { "path": { "type": "string" } }, "required": ["path"] }
+    }
+  ]
+}

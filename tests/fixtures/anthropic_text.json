@@ -1,0 +1,10 @@
+{
+  "model": "claude-sonnet-4-6",
+  "max_tokens": 1024,
+  "system": "You are a helpful assistant.",
+  "stream": true,
+  "messages": [
+    { "role": "user", "content": "Hello." },
+    { "role": "assistant", "content": [{ "type": "text", "text": "Hi there!" }] }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "model": "claude-sonnet-4-6",
+  "max_tokens": 100,
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo=" } },
+        { "type": "text", "text": "What is this?" }
+      ]
+    }
+  ]
+}

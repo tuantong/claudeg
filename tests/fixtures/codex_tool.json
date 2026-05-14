@@ -1,0 +1,20 @@
+{
+  "model": "gpt-5.3-codex",
+  "instructions": "You are a helpful coding assistant.",
+  "stream": true,
+  "input": [
+    { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "Read foo.txt" }] },
+    { "type": "message", "role": "assistant", "content": [{ "type": "output_text", "text": "Reading the file." }] },
+    { "type": "function_call", "call_id": "toolu_01", "name": "Read", "arguments": "{\"path\":\"foo.txt\"}" },
+    { "type": "function_call_output", "call_id": "toolu_01", "output": "\"hello world\"" }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "name": "Read",
+      "description": "Read a file",
+      "parameters": { "type": "object", "properties": { "path": { "type": "string" } }, "required": ["path"] }
+    }
+  ],
+  "store": false
+}
