@@ -2,7 +2,7 @@
 
 Run **Claude Code** through your **ChatGPT subscription**.
 
-`claudeg` is a small, fast Rust binary that presents Anthropic's Messages API on `127.0.0.1` and translates each request to ChatGPT's Codex Responses API, forwarded with your ChatGPT (Plus / Pro / Business / Enterprise) OAuth token. Claude Code itself runs unmodified — `claudeg` just sits on loopback and pretends to be Anthropic.
+`claudeg` is a small, fast Rust binary that presents Anthropic's Messages API on `127.0.0.1` and translates each request to ChatGPT's Codex Responses API, forwarded with your ChatGPT (Go / Plus / Pro / Business / Enterprise / Edu) OAuth token. Claude Code itself runs unmodified — `claudeg` just sits on loopback and pretends to be Anthropic.
 
 ```
 ┌──────────────┐  HTTPS  ┌──────────────────┐  HTTPS  ┌────────────────────────┐
@@ -20,13 +20,13 @@ Run **Claude Code** through your **ChatGPT subscription**.
 **macOS / Linux:**
 
 ```sh
-curl -fsSL https://github.com/tuantong/claudeg/releases/latest/download/install.sh | sh
+curl -fsSL https://claudeg.org/install.sh | sh
 ```
 
 **Windows (PowerShell):**
 
 ```powershell
-iwr -useb https://github.com/tuantong/claudeg/releases/latest/download/install.ps1 | iex
+iwr -useb https://claudeg.org/install.ps1 | iex
 ```
 
 The installer downloads the right binary for your OS/arch, drops it on PATH, and runs `claudeg setup` (OAuth login + sentinel approval + auto-start service).
@@ -60,25 +60,21 @@ Your normal `claude` is unchanged — it still hits real Anthropic.
 
 ---
 
-## Configuration
+## Tier auto-mapping
 
-`claudeg` reads `~/Library/Application Support/claudeg/config.toml` on macOS (`~/.config/claudeg/config.toml` on Linux, `%APPDATA%\claudeg\config.toml` on Windows). All fields optional.
+`claudeg` auto-detects your ChatGPT tier from the JWT `chatgpt_plan_type` claim and picks the best model per Claude → ChatGPT translation. Nothing to configure.
 
-```toml
-listen = "127.0.0.1:4000"
-default_model = "gpt-5.3-codex"
+| Claude | Go | Plus / Edu | Pro / Business / Enterprise |
+|---|---|---|---|
+| `claude-opus-4-7` | `gpt-5.5` | `gpt-5.5` | `gpt-5.5-pro` |
+| `claude-sonnet-4-6` | `gpt-5.5` | `gpt-5.3-codex` | `gpt-5.3-codex-spark` |
+| `claude-haiku-4-5` | `gpt-5.4-mini` | `gpt-5.4-mini` | `gpt-5.4-mini` |
 
-[models]
-# Override the default Anthropic → ChatGPT model mapping.
-"claude-opus-4-7"           = "gpt-5.5"          # built-in: gpt-5.5
-"claude-sonnet-4-6"         = "gpt-5.3-codex"    # built-in: gpt-5.3-codex
-"claude-haiku-4-5-20251001" = "gpt-5.4-mini"     # built-in: gpt-5.4-mini
-"claude-haiku-4-5"          = "gpt-5.4-mini"     # built-in: gpt-5.4-mini
-```
+Free tier is not supported — claudeg requires Go ($8/mo) or higher.
 
-Slugs accepted by the ChatGPT-Codex backend (as of May 2026):
-`gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.3-codex`, `gpt-5.2`.
-`gpt-5.3-codex-spark` is Pro-tier-only and not API-accessible.
+Run `claudeg whoami` to see your detected tier and the active mapping.
+
+> v0.2.0 dropped the `default_model` / `[models]` config keys — auto-mapping is the only path. If you have them in your `config.toml`, they're ignored with a warning at startup; you can delete them.
 
 ---
 
@@ -108,7 +104,7 @@ claudeg serve
 Every `claudeg "..."` invocation prints one line:
 
 ```
-INFO claudeg: request method=POST path=/v1/messages model_in=claude-opus-4-7 model_out=gpt-5.5 status=200 …
+INFO claudeg: request method=POST path=/v1/messages model_in=claude-opus-4-7 model_out=gpt-5.5 tier=plus status=200 …
 ```
 
 Plain `claude` (no env vars) leaves no trace — its traffic goes straight to `api.anthropic.com`.
@@ -142,7 +138,7 @@ OAuth: the ChatGPT-Codex public client (`app_EMoamEEZ73f0CkXaXp7hrann`) + PKCE (
 | `Error: HTTP status client error (404 Not Found) for url (https://auth.openai.com/oauth/device/code)` | You're on an old build that used device-code. Reinstall via the one-liner. |
 | `upstream 400: "Instructions are required"` | Anthropic request had no `system` field — claudeg sends a default. If you still see this, file an issue. |
 | `upstream 400: "Store must be set to false"` / `"Unsupported parameter: max_output_tokens"` | Codex backend protocol drift. Open an issue with the proxy log. |
-| `upstream 400: "<model> is not supported when using Codex with a ChatGPT account"` | The mapped model isn't on your tier (e.g. `gpt-5.5` requires Plus+). Add an override in `config.toml`. |
+| `upstream 400: "<model> is not supported when using Codex with a ChatGPT account"` | Your tier doesn't support that slug. Run `claudeg whoami` to see the auto-detected tier and active mapping. If the mapping looks wrong for your tier, file an issue. |
 | Claude Code shows "Detected a custom API key" prompt every run | Run `claudeg setup` once — it pre-approves the sentinel value in `~/.claude.json`. |
 | Claude Code shows "Auth conflict" warning | Harmless. Both `claude.ai` token and `ANTHROPIC_API_KEY` are set; the env var wins for `claudeg`, the token wins for plain `claude`. |
 | Port 4000 busy | `claudeg serve --port 5000` (foreground), or set `[listen]` in `config.toml`. |
@@ -168,4 +164,4 @@ MIT.
 
 ## Acknowledgements
 
-OAuth flow and Codex Responses API contract reverse-engineered from the public [openai/codex](https://github.com/openai/codex) CLI. Inspired by [caixiaoshun/claudex](https://github.com/caixiaoshun/claudex) and [raine/claude-code-proxy](https://github.com/raine/claude-code-proxy).
+OAuth flow and Codex Responses API contract reverse-engineered from the public [openai/codex](https://github.com/openai/codex) CLI.

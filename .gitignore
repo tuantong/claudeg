@@ -3,3 +3,5 @@
 Cargo.lock
 .DS_Store
 /.oai4cc-test-cache/
+/.wrangler/
+

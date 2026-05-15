@@ -6,6 +6,7 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use axum::routing::{get, post};
 use axum::{Router, extract::State};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 // ─── types: Anthropic wire format ───
@@ -239,80 +240,176 @@ pub struct CodexErrorPayload {
 }
 
 // ─── config ───
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     #[serde(default = "default_listen")]
     pub listen: String,
-    #[serde(default = "default_default_model")]
-    pub default_model: String,
-    #[serde(default)]
-    pub models: HashMap<String, String>,
 }
 
 fn default_listen() -> String { "127.0.0.1:4000".to_string() }
-fn default_default_model() -> String { "gpt-5.3-codex".to_string() } // industry-leading coding model
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             listen: default_listen(),
-            default_model: default_default_model(),
-            models: builtin_model_map(),
         }
     }
 }
 
-fn builtin_model_map() -> HashMap<String, String> {
-    // ChatGPT-Codex slugs verified against developers.openai.com/codex/models (May 2026).
-    // - gpt-5.5         Plus/Pro, newest frontier model
-    // - gpt-5.4         Plus/Pro, flagship
-    // - gpt-5.4-mini    Plus/Pro, fast / responsive coding
-    // - gpt-5.3-codex   Plus/Pro, industry-leading coding model
-    //
-    // We map Opus → gpt-5.5 (best reasoning), Sonnet → gpt-5.3-codex (coding-tuned),
-    // Haiku → gpt-5.4-mini (cheap+fast). Override in ~/.claudeg/config.toml.
-    [
-        ("claude-opus-4-7",            "gpt-5.5"),
-        ("claude-sonnet-4-6",          "gpt-5.3-codex"),
-        ("claude-haiku-4-5-20251001",  "gpt-5.4-mini"),
-        ("claude-haiku-4-5",           "gpt-5.4-mini"),
-    ]
-    .into_iter()
-    .map(|(a, b)| (a.to_string(), b.to_string()))
-    .collect()
-}
+/// Claude → ChatGPT model slugs the proxy is aware of. The actual mapping is
+/// resolved at request time by [`ChatGptTier::map_model`]; this list exists
+/// only so `/v1/models` can advertise the Anthropic-side names.
+pub const KNOWN_CLAUDE_MODELS: &[&str] = &[
+    "claude-opus-4-7",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5-20251001",
+    "claude-haiku-4-5",
+];
 
 impl Config {
-    pub fn map_model(&self, claude_name: &str) -> &str {
-        self.models
-            .get(claude_name)
-            .map(String::as_str)
-            .unwrap_or(self.default_model.as_str())
-    }
-
-    /// Merge built-in defaults under any user-provided model entries.
-    pub fn with_defaults(mut self) -> Self {
-        for (k, v) in builtin_model_map() {
-            self.models.entry(k).or_insert(v);
-        }
-        self
-    }
-
     pub fn load_or_default() -> Self {
         let path = match directories::ProjectDirs::from("", "", "claudeg") {
             Some(d) => d.config_dir().join("config.toml"),
             None => return Self::default(),
         };
         match std::fs::read_to_string(&path) {
-            Ok(s) => toml::from_str::<Config>(&s)
-                .map(|c| c.with_defaults())
-                .unwrap_or_else(|e| {
-                    eprintln!("warning: {} parse error: {}; using defaults", path.display(), e);
-                    Self::default()
-                }),
+            Ok(s) => Self::parse_with_legacy_warnings(&s).unwrap_or_else(|e| {
+                eprintln!("warning: {} parse error: {}; using defaults", path.display(), e);
+                Self::default()
+            }),
             Err(_) => Self::default(),
+        }
+    }
+
+    /// Parse a config.toml string. Emits one `tracing::warn!` per legacy key
+    /// (`default_model`, `[models]`) — they're no longer honored as of v0.2.0
+    /// since tier auto-mapping is the only path.
+    pub fn parse_with_legacy_warnings(s: &str) -> Result<Self, toml::de::Error> {
+        if let Ok(raw) = toml::from_str::<toml::Value>(s) {
+            if raw.get("default_model").is_some() {
+                tracing::warn!(
+                    "claudeg: config.toml field `default_model` is no longer supported \
+                     (v0.2.0+: tier auto-mapping). It will be ignored."
+                );
+            }
+            if raw.get("models").is_some() {
+                tracing::warn!(
+                    "claudeg: config.toml field `[models]` is no longer supported \
+                     (v0.2.0+: tier auto-mapping). It will be ignored."
+                );
+            }
+        }
+        toml::from_str::<Config>(s)
+    }
+}
+
+// ─── ChatGPT tier (auto-detected from JWT `chatgpt_plan_type` claim) ───
+
+/// ChatGPT subscription tier as reported by the JWT `chatgpt_plan_type` claim.
+/// `Unknown` covers both "claim missing" and "claim value we don't recognize"
+/// — both are treated like `Plus` by the mapper, but kept distinct so the
+/// `whoami` UI can be explicit about the situation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ChatGptTier {
+    Free,
+    Go,
+    Plus,
+    Edu,
+    Pro,
+    Business,
+    Enterprise,
+    #[default]
+    Unknown,
+}
+
+impl ChatGptTier {
+    /// Case-insensitive parse of the JWT `chatgpt_plan_type` claim value.
+    /// Anything not in the known set → `Unknown`.
+    pub fn from_jwt_claim(s: &str) -> Self {
+        match s.to_ascii_lowercase().as_str() {
+            "free"       => Self::Free,
+            "go"         => Self::Go,
+            "plus"       => Self::Plus,
+            "edu"        => Self::Edu,
+            "pro"        => Self::Pro,
+            "business"   => Self::Business,
+            "enterprise" => Self::Enterprise,
+            _            => Self::Unknown,
+        }
+    }
+
+    /// Map a Claude model slug to the ChatGPT slug appropriate for this tier.
+    /// Falls back to [`Self::default_fallback_model`] for unknown Claude
+    /// models. **Panics** on `Tier::Free` — callers must short-circuit Free
+    /// before any model mapping (it's rejected at handler entry).
+    pub fn map_model(self, claude_model: &str) -> &'static str {
+        match self {
+            Self::Free => panic!(
+                "ChatGptTier::map_model called on Free — callers must reject Free \
+                 with HTTP 403 before mapping"
+            ),
+            Self::Go => match claude_model {
+                "claude-opus-4-7"            => "gpt-5.5",
+                "claude-sonnet-4-6"          => "gpt-5.5",
+                "claude-haiku-4-5-20251001"  => "gpt-5.4-mini",
+                "claude-haiku-4-5"           => "gpt-5.4-mini",
+                _ => self.default_fallback_model(),
+            },
+            // Plus / Edu / Unknown share the same mapping (Unknown is treated as Plus).
+            Self::Plus | Self::Edu | Self::Unknown => match claude_model {
+                "claude-opus-4-7"            => "gpt-5.5",
+                "claude-sonnet-4-6"          => "gpt-5.3-codex",
+                "claude-haiku-4-5-20251001"  => "gpt-5.4-mini",
+                "claude-haiku-4-5"           => "gpt-5.4-mini",
+                _ => self.default_fallback_model(),
+            },
+            Self::Pro | Self::Business | Self::Enterprise => match claude_model {
+                "claude-opus-4-7"            => "gpt-5.5-pro",
+                "claude-sonnet-4-6"          => "gpt-5.3-codex-spark",
+                "claude-haiku-4-5-20251001"  => "gpt-5.4-mini",
+                "claude-haiku-4-5"           => "gpt-5.4-mini",
+                _ => self.default_fallback_model(),
+            },
+        }
+    }
+
+    /// ChatGPT slug to use when the requested Claude model isn't in our table.
+    pub fn default_fallback_model(self) -> &'static str {
+        match self {
+            Self::Free => "gpt-5.3-codex", // unreachable in practice; Free is rejected at the door
+            Self::Go => "gpt-5.5",
+            Self::Plus | Self::Edu | Self::Unknown => "gpt-5.3-codex",
+            Self::Pro | Self::Business | Self::Enterprise => "gpt-5.3-codex-spark",
+        }
+    }
+
+    /// Title-cased name for human-readable output (`whoami`, error messages).
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Free       => "Free",
+            Self::Go         => "Go",
+            Self::Plus       => "Plus",
+            Self::Edu        => "Edu",
+            Self::Pro        => "Pro",
+            Self::Business   => "Business",
+            Self::Enterprise => "Enterprise",
+            Self::Unknown    => "Unknown",
+        }
+    }
+
+    /// Lowercase identifier, used in the per-request log line `tier=<name>`.
+    pub fn as_log_str(self) -> &'static str {
+        match self {
+            Self::Free       => "free",
+            Self::Go         => "go",
+            Self::Plus       => "plus",
+            Self::Edu        => "edu",
+            Self::Pro        => "pro",
+            Self::Business   => "business",
+            Self::Enterprise => "enterprise",
+            Self::Unknown    => "unknown",
         }
     }
 }
@@ -321,7 +418,10 @@ impl Config {
 
 pub const DEFAULT_INSTRUCTIONS: &str = "You are a helpful coding assistant.";
 
-pub fn to_codex(req: &AnthropicReq, cfg: &Config) -> CodexReq {
+/// Translate an Anthropic request to a Codex request. The caller supplies the
+/// already-resolved ChatGPT model slug (via [`ChatGptTier::map_model`]) so
+/// this function stays free of subscription-tier logic.
+pub fn to_codex(req: &AnthropicReq, model_out: &str) -> CodexReq {
     let instructions = Some(req.system.as_ref().map(|s| match s {
         SystemField::Text(t) => t.clone(),
         SystemField::Blocks(bs) => bs
@@ -351,7 +451,7 @@ pub fn to_codex(req: &AnthropicReq, cfg: &Config) -> CodexReq {
     });
 
     CodexReq {
-        model: cfg.map_model(&req.model).to_string(),
+        model: model_out.to_string(),
         instructions,
         stream: Some(true),
         input,
@@ -635,6 +735,8 @@ pub enum AppError {
     InvalidRequest(String),
     #[error("not authenticated; run `claudeg login`")]
     NotAuthenticated,
+    #[error("claudeg needs ChatGPT Go/Plus/Pro/Business/Enterprise/Edu. Detected: free. Upgrade at https://chatgpt.com/pricing")]
+    SubscriptionRequired,
     #[error("upstream rate limit")]
     RateLimit { retry_after: Option<String> },
     #[error("{0}")]
@@ -646,25 +748,34 @@ pub enum AppError {
 impl AppError {
     pub fn status(&self) -> StatusCode {
         match self {
-            Self::InvalidRequest(_) => StatusCode::BAD_REQUEST,
-            Self::NotAuthenticated  => StatusCode::UNAUTHORIZED,
-            Self::RateLimit { .. }  => StatusCode::TOO_MANY_REQUESTS,
-            Self::Upstream(_)       => StatusCode::BAD_GATEWAY,
-            Self::Other(_)          => StatusCode::BAD_GATEWAY,
+            Self::InvalidRequest(_)     => StatusCode::BAD_REQUEST,
+            Self::NotAuthenticated      => StatusCode::UNAUTHORIZED,
+            Self::SubscriptionRequired  => StatusCode::FORBIDDEN,
+            Self::RateLimit { .. }      => StatusCode::TOO_MANY_REQUESTS,
+            Self::Upstream(_)           => StatusCode::BAD_GATEWAY,
+            Self::Other(_)              => StatusCode::BAD_GATEWAY,
         }
     }
 
     pub fn kind(&self) -> &'static str {
         match self {
-            Self::InvalidRequest(_) => "invalid_request_error",
-            Self::NotAuthenticated  => "authentication_error",
-            Self::RateLimit { .. }  => "rate_limit_error",
-            Self::Upstream(_)       => "api_error",
-            Self::Other(_)          => "api_error",
+            Self::InvalidRequest(_)     => "invalid_request_error",
+            Self::NotAuthenticated      => "authentication_error",
+            Self::SubscriptionRequired  => "subscription_required",
+            Self::RateLimit { .. }      => "rate_limit_error",
+            Self::Upstream(_)           => "api_error",
+            Self::Other(_)              => "api_error",
         }
     }
 
     pub fn body(&self) -> Value {
+        // `subscription_required` uses the simpler `{"error":{...}}` shape
+        // specified in the v0.2.0 tier-detection design (no outer `"type":"error"`).
+        if matches!(self, Self::SubscriptionRequired) {
+            return serde_json::json!({
+                "error": { "type": self.kind(), "message": self.to_string() }
+            });
+        }
         serde_json::json!({
             "type": "error",
             "error": { "type": self.kind(), "message": self.to_string() }
@@ -737,6 +848,11 @@ pub struct AuthState {
     pub expires_at: SystemTime,
     #[serde(default)]
     pub account_id: Option<String>,
+    /// ChatGPT subscription tier as parsed from the JWT's `chatgpt_plan_type`
+    /// claim. `Unknown` (the default) covers old auth.json files written by
+    /// v0.1.x and JWTs missing the claim.
+    #[serde(default)]
+    pub tier: ChatGptTier,
 }
 
 mod humantime_serde_systemtime {
@@ -805,20 +921,37 @@ struct TokenResponse {
     account_id: Option<String>,
 }
 
-/// Extract `chatgpt_account_id` from a ChatGPT-issued JWT access token.
-/// JWT format: `header.payload.signature` — we only need the middle segment.
-/// Returns None if anything is malformed; never panics.
-pub fn extract_account_id_from_jwt(access_token: &str) -> Option<String> {
+/// Extract `chatgpt_account_id` and `chatgpt_plan_type` from a ChatGPT-issued
+/// JWT access token in a single decode. JWT format: `header.payload.signature`
+/// — we only need the middle segment. The function never panics; missing /
+/// malformed fields surface as `None` / `ChatGptTier::Unknown`.
+pub fn extract_jwt_claims(access_token: &str) -> (Option<String>, ChatGptTier) {
     use base64::Engine;
-    let payload_b64 = access_token.split('.').nth(1)?;
-    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(payload_b64)
-        .ok()?;
-    let v: Value = serde_json::from_slice(&bytes).ok()?;
-    v.get("https://api.openai.com/auth")?
-        .get("chatgpt_account_id")?
-        .as_str()
-        .map(String::from)
+    let Some(payload_b64) = access_token.split('.').nth(1) else {
+        return (None, ChatGptTier::Unknown);
+    };
+    let Ok(bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload_b64) else {
+        return (None, ChatGptTier::Unknown);
+    };
+    let Ok(v) = serde_json::from_slice::<Value>(&bytes) else {
+        return (None, ChatGptTier::Unknown);
+    };
+    let auth = v.get("https://api.openai.com/auth");
+    let account_id = auth
+        .and_then(|a| a.get("chatgpt_account_id"))
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let tier = auth
+        .and_then(|a| a.get("chatgpt_plan_type"))
+        .and_then(|v| v.as_str())
+        .map(ChatGptTier::from_jwt_claim)
+        .unwrap_or(ChatGptTier::Unknown);
+    (account_id, tier)
+}
+
+/// Backwards-compatible shim — same as `extract_jwt_claims(t).0`.
+pub fn extract_account_id_from_jwt(access_token: &str) -> Option<String> {
+    extract_jwt_claims(access_token).0
 }
 
 pub async fn refresh_at(
@@ -848,12 +981,14 @@ pub async fn refresh_at(
         return Err(AppError::Upstream(format!("refresh failed {status}: {body}")));
     }
     let tr: TokenResponse = resp.json().await.map_err(|e| AppError::Upstream(e.to_string()))?;
-    let account_id = tr.account_id.or_else(|| extract_account_id_from_jwt(&tr.access_token));
+    let (jwt_account_id, tier) = extract_jwt_claims(&tr.access_token);
+    let account_id = tr.account_id.or(jwt_account_id);
     Ok(AuthState {
         access_token: tr.access_token,
         refresh_token: tr.refresh_token.unwrap_or_else(|| refresh_token.to_string()),
         expires_at: SystemTime::now() + std::time::Duration::from_secs(tr.expires_in),
         account_id,
+        tier,
     })
 }
 
@@ -1142,12 +1277,14 @@ pub async fn pkce_login_at(
         .json()
         .await
         .map_err(|e| AppError::Upstream(e.to_string()))?;
-    let account_id = tr.account_id.or_else(|| extract_account_id_from_jwt(&tr.access_token));
+    let (jwt_account_id, tier) = extract_jwt_claims(&tr.access_token);
+    let account_id = tr.account_id.or(jwt_account_id);
     Ok(AuthState {
         access_token: tr.access_token,
         refresh_token: tr.refresh_token.unwrap_or_default(),
         expires_at: SystemTime::now() + std::time::Duration::from_secs(tr.expires_in),
         account_id,
+        tier,
     })
 }
 
@@ -1212,6 +1349,9 @@ pub struct RequestModels(pub Arc<std::sync::Mutex<ModelPair>>);
 pub struct ModelPair {
     pub model_in: String,
     pub model_out: String,
+    /// Lowercase tier name (e.g. `"plus"`, `"pro"`, `"unknown"`). Logged
+    /// per-request so operators can see which mapping table was applied.
+    pub tier: String,
 }
 
 pub fn build_app(state: AppState) -> Router {
@@ -1256,6 +1396,7 @@ async fn request_log_middleware(
         path = %path,
         model_in = %pair.model_in,
         model_out = %pair.model_out,
+        tier = %pair.tier,
         status = status,
         duration_ms = duration_ms,
         bytes_out = bytes_out,
@@ -1267,10 +1408,10 @@ async fn request_log_middleware(
 
 async fn health() -> &'static str { "ok" }
 
-async fn models(State(state): State<AppState>) -> Json<Value> {
+async fn models(State(_state): State<AppState>) -> Json<Value> {
     let now = SystemTime::now().duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64).unwrap_or(0);
-    let data: Vec<Value> = state.cfg.models.keys().map(|name| {
+    let data: Vec<Value> = KNOWN_CLAUDE_MODELS.iter().map(|name| {
         serde_json::json!({
             "id": name, "type": "model",
             "display_name": name, "created_at": now
@@ -1326,11 +1467,26 @@ async fn messages(
         tools = req.tools.as_ref().map(|t| t.len()).unwrap_or(0),
         "incoming /v1/messages"
     );
-    let codex = to_codex(&req, &state.cfg);
+    // Auto-detect the ChatGPT tier from the cached JWT, reject Free immediately,
+    // and pick the Claude → ChatGPT model slug from the tier-specific table.
+    let tier = state.auth.lock().await
+        .as_ref()
+        .map(|a| a.tier)
+        .unwrap_or(ChatGptTier::Unknown);
+    if tier == ChatGptTier::Free {
+        if let Ok(mut g) = models.0.lock() {
+            g.model_in = req.model.clone();
+            g.tier = tier.as_log_str().to_string();
+        }
+        return Err(AppError::SubscriptionRequired);
+    }
+    let model_out = tier.map_model(&req.model).to_string();
+    let codex = to_codex(&req, &model_out);
     // Record the model pair so the request-logging middleware can include it.
     if let Ok(mut g) = models.0.lock() {
         g.model_in = req.model.clone();
         g.model_out = codex.model.clone();
+        g.tier = tier.as_log_str().to_string();
     }
     let pairs = forward_translated_pairs(state.clone(), codex, req.model.clone()).await?;
 
@@ -2097,13 +2253,7 @@ async fn main() -> anyhow::Result<()> {
             println!("logged in. token cached at {}", AuthState::default_path().display());
         }
         Cmd::Whoami => match AuthState::load_default() {
-            Some(s) => {
-                let rem = s.expires_at.duration_since(SystemTime::now()).ok();
-                match rem {
-                    Some(d) => println!("logged in (expires in {}s)", d.as_secs()),
-                    None    => println!("logged in (token expired — refresh on next call)"),
-                }
-            }
+            Some(s) => print_whoami(&s),
             None => println!("not logged in. run `claudeg login`."),
         },
         Cmd::Serve { port } => {
@@ -2136,6 +2286,45 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Render the `claudeg whoami` output for a loaded `AuthState`.
+fn print_whoami(s: &AuthState) {
+    let rem = s.expires_at.duration_since(SystemTime::now()).ok();
+    let expires = match rem {
+        Some(d) => format!("expires in {}s", d.as_secs()),
+        None    => "token expired — refresh on next call".to_string(),
+    };
+
+    match s.tier {
+        ChatGptTier::Free => {
+            println!(
+                "logged in as Free — claudeg requires Go/Plus/Pro tier or higher. \
+                 Upgrade at https://chatgpt.com/pricing"
+            );
+            println!("({expires})");
+        }
+        ChatGptTier::Unknown => {
+            println!(
+                "logged in (tier unknown — JWT missing chatgpt_plan_type, treating as Plus) \
+                 ({expires})"
+            );
+            print_mapping_table(ChatGptTier::Unknown);
+        }
+        tier => {
+            println!("logged in as {} ({})", tier.display_name(), expires);
+            print_mapping_table(tier);
+        }
+    }
+}
+
+fn print_mapping_table(tier: ChatGptTier) {
+    println!();
+    println!("auto-mapping (detected from chatgpt_plan_type):");
+    println!("  claude-opus-4-7      → {}", tier.map_model("claude-opus-4-7"));
+    println!("  claude-sonnet-4-6    → {}", tier.map_model("claude-sonnet-4-6"));
+    println!("  claude-haiku-4-5     → {}", tier.map_model("claude-haiku-4-5"));
+    println!("  (unmapped Claude model → {})", tier.default_fallback_model());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2165,18 +2354,16 @@ mod tests {
     }
 
     #[test]
-    fn config_default_has_known_models() {
+    fn config_default_has_listen() {
         let cfg = Config::default();
         assert_eq!(cfg.listen, "127.0.0.1:4000");
-        assert_eq!(cfg.map_model("claude-opus-4-7"), "gpt-5.5");
-        assert_eq!(cfg.map_model("claude-sonnet-4-6"), "gpt-5.3-codex");
-        assert_eq!(cfg.map_model("claude-haiku-4-5-20251001"), "gpt-5.4-mini");
-        // Unknown → default
-        assert_eq!(cfg.map_model("claude-future-model"), "gpt-5.3-codex");
     }
 
     #[test]
-    fn config_loads_toml_overrides() {
+    fn config_ignores_legacy_model_keys() {
+        // v0.2.0 dropped `default_model` and `[models]` — they should parse
+        // without error (so old configs don't break startup) but contribute
+        // nothing to the resulting Config struct.
         let toml = r#"
             listen = "127.0.0.1:5555"
             default_model = "gpt-5.4"
@@ -2184,13 +2371,8 @@ mod tests {
             [models]
             "claude-haiku-4-5-20251001" = "gpt-5.3-codex-spark"
         "#;
-        let cfg: Config = toml::from_str(toml).unwrap();
-        let cfg = cfg.with_defaults();
+        let cfg = Config::parse_with_legacy_warnings(toml).unwrap();
         assert_eq!(cfg.listen, "127.0.0.1:5555");
-        assert_eq!(cfg.default_model, "gpt-5.4");
-        assert_eq!(cfg.map_model("claude-haiku-4-5-20251001"), "gpt-5.3-codex-spark");
-        // Built-in opus mapping survived the merge (TOML didn't override it).
-        assert_eq!(cfg.map_model("claude-opus-4-7"), "gpt-5.5");
     }
 
     fn load_pair(a: &str, c: &str) -> (AnthropicReq, Value) {
@@ -2206,24 +2388,25 @@ mod tests {
     #[test]
     fn to_codex_translates_text() {
         let (a, expected) = load_pair("anthropic_text.json", "codex_text.json");
-        let cfg = Config::default();
-        let got = to_codex(&a, &cfg);
+        // Fixture targets the Plus mapping (claude-sonnet-4-6 → gpt-5.3-codex).
+        let model_out = ChatGptTier::Plus.map_model(&a.model);
+        let got = to_codex(&a, model_out);
         assert_eq!(serde_json::to_value(&got).unwrap(), expected);
     }
 
     #[test]
     fn to_codex_translates_tools() {
         let (a, expected) = load_pair("anthropic_tool.json", "codex_tool.json");
-        let cfg = Config::default();
-        let got = to_codex(&a, &cfg);
+        let model_out = ChatGptTier::Plus.map_model(&a.model);
+        let got = to_codex(&a, model_out);
         assert_eq!(serde_json::to_value(&got).unwrap(), expected);
     }
 
     #[test]
     fn to_codex_translates_image() {
         let (a, expected) = load_pair("anthropic_image.json", "codex_image.json");
-        let cfg = Config::default();
-        let got = to_codex(&a, &cfg);
+        let model_out = ChatGptTier::Plus.map_model(&a.model);
+        let got = to_codex(&a, model_out);
         assert_eq!(serde_json::to_value(&got).unwrap(), expected);
     }
 
@@ -2428,6 +2611,7 @@ mod tests {
             refresh_token: "RT".into(),
             expires_at: SystemTime::now() + Duration::from_secs(3600),
             account_id: Some("acct_42".into()),
+            tier: ChatGptTier::Plus,
         };
         state.save_to(&path).unwrap();
 
@@ -2435,6 +2619,7 @@ mod tests {
         assert_eq!(loaded.access_token, "AT");
         assert_eq!(loaded.refresh_token, "RT");
         assert_eq!(loaded.account_id.as_deref(), Some("acct_42"));
+        assert_eq!(loaded.tier, ChatGptTier::Plus);
 
         #[cfg(unix)]
         {
@@ -2671,6 +2856,7 @@ mod tests {
             refresh_token: "RT".into(),
             expires_at: SystemTime::now() + Duration::from_secs(3600),
             account_id: None,
+            tier: ChatGptTier::Plus,
         });
 
         let app = build_app(state);
@@ -2753,6 +2939,7 @@ mod tests {
             refresh_token: "stale_RT".into(),
             expires_at: SystemTime::now() + Duration::from_secs(3600),
             account_id: None,
+            tier: ChatGptTier::Plus,
         });
 
         let app = build_app(state.clone());
@@ -2808,6 +2995,7 @@ mod tests {
             refresh_token: "RT".into(),
             expires_at: SystemTime::now() + Duration::from_secs(3600),
             account_id: None,
+            tier: ChatGptTier::Plus,
         });
 
         let app = build_app(state);
@@ -3010,5 +3198,176 @@ mod tests {
         let cmd = build_windows_startup_cmd("C:\\Users\\u\\claudeg.exe", 4000);
         assert!(cmd.contains("start \"\" /B"));
         assert!(cmd.contains("\"C:\\Users\\u\\claudeg.exe\" serve --port 4000"));
+    }
+
+    // ─── ChatGPT-tier auto-mapping (v0.2.0) ───
+    mod tier_tests {
+        use super::super::*;
+        use pretty_assertions::assert_eq;
+
+        #[test]
+        fn from_jwt_claim_recognises_known_tiers_case_insensitive() {
+            // Canonical lowercase strings.
+            assert_eq!(ChatGptTier::from_jwt_claim("free"),       ChatGptTier::Free);
+            assert_eq!(ChatGptTier::from_jwt_claim("go"),         ChatGptTier::Go);
+            assert_eq!(ChatGptTier::from_jwt_claim("plus"),       ChatGptTier::Plus);
+            assert_eq!(ChatGptTier::from_jwt_claim("edu"),        ChatGptTier::Edu);
+            assert_eq!(ChatGptTier::from_jwt_claim("pro"),        ChatGptTier::Pro);
+            assert_eq!(ChatGptTier::from_jwt_claim("business"),   ChatGptTier::Business);
+            assert_eq!(ChatGptTier::from_jwt_claim("enterprise"), ChatGptTier::Enterprise);
+
+            // Case-insensitive — the spec says any casing must match.
+            assert_eq!(ChatGptTier::from_jwt_claim("Plus"),       ChatGptTier::Plus);
+            assert_eq!(ChatGptTier::from_jwt_claim("PLUS"),       ChatGptTier::Plus);
+            assert_eq!(ChatGptTier::from_jwt_claim("Pro"),        ChatGptTier::Pro);
+            assert_eq!(ChatGptTier::from_jwt_claim("BUSINESS"),   ChatGptTier::Business);
+            assert_eq!(ChatGptTier::from_jwt_claim("Enterprise"), ChatGptTier::Enterprise);
+
+            // Anything outside the known set falls through to Unknown.
+            assert_eq!(ChatGptTier::from_jwt_claim(""),           ChatGptTier::Unknown);
+            assert_eq!(ChatGptTier::from_jwt_claim("team"),       ChatGptTier::Unknown);
+            assert_eq!(ChatGptTier::from_jwt_claim("plus_v2"),    ChatGptTier::Unknown);
+        }
+
+        #[test]
+        fn map_model_go_tier() {
+            let t = ChatGptTier::Go;
+            assert_eq!(t.map_model("claude-opus-4-7"),            "gpt-5.5");
+            assert_eq!(t.map_model("claude-sonnet-4-6"),          "gpt-5.5");
+            assert_eq!(t.map_model("claude-haiku-4-5-20251001"),  "gpt-5.4-mini");
+            assert_eq!(t.map_model("claude-haiku-4-5"),           "gpt-5.4-mini");
+        }
+
+        #[test]
+        fn map_model_plus_edu_unknown_share_the_same_table() {
+            for t in [ChatGptTier::Plus, ChatGptTier::Edu, ChatGptTier::Unknown] {
+                assert_eq!(t.map_model("claude-opus-4-7"),           "gpt-5.5",       "{t:?}");
+                assert_eq!(t.map_model("claude-sonnet-4-6"),         "gpt-5.3-codex", "{t:?}");
+                assert_eq!(t.map_model("claude-haiku-4-5-20251001"), "gpt-5.4-mini",  "{t:?}");
+                assert_eq!(t.map_model("claude-haiku-4-5"),          "gpt-5.4-mini",  "{t:?}");
+            }
+        }
+
+        #[test]
+        fn map_model_pro_business_enterprise_share_the_same_table() {
+            for t in [ChatGptTier::Pro, ChatGptTier::Business, ChatGptTier::Enterprise] {
+                assert_eq!(t.map_model("claude-opus-4-7"),           "gpt-5.5-pro",        "{t:?}");
+                assert_eq!(t.map_model("claude-sonnet-4-6"),         "gpt-5.3-codex-spark","{t:?}");
+                assert_eq!(t.map_model("claude-haiku-4-5-20251001"), "gpt-5.4-mini",       "{t:?}");
+                assert_eq!(t.map_model("claude-haiku-4-5"),          "gpt-5.4-mini",       "{t:?}");
+            }
+        }
+
+        #[test]
+        fn default_fallback_per_tier() {
+            // Each tier has a fallback for "Claude model not in our table".
+            assert_eq!(ChatGptTier::Go.default_fallback_model(),         "gpt-5.5");
+            assert_eq!(ChatGptTier::Plus.default_fallback_model(),       "gpt-5.3-codex");
+            assert_eq!(ChatGptTier::Edu.default_fallback_model(),        "gpt-5.3-codex");
+            assert_eq!(ChatGptTier::Unknown.default_fallback_model(),    "gpt-5.3-codex");
+            assert_eq!(ChatGptTier::Pro.default_fallback_model(),        "gpt-5.3-codex-spark");
+            assert_eq!(ChatGptTier::Business.default_fallback_model(),   "gpt-5.3-codex-spark");
+            assert_eq!(ChatGptTier::Enterprise.default_fallback_model(), "gpt-5.3-codex-spark");
+
+            // And map_model falls back to it for unknown Claude slugs.
+            assert_eq!(ChatGptTier::Plus.map_model("claude-future-model"), "gpt-5.3-codex");
+            assert_eq!(ChatGptTier::Pro.map_model("claude-future-model"),  "gpt-5.3-codex-spark");
+            assert_eq!(ChatGptTier::Go.map_model("claude-future-model"),   "gpt-5.5");
+        }
+
+        #[test]
+        #[should_panic(expected = "ChatGptTier::map_model called on Free")]
+        fn map_model_panics_on_free_tier() {
+            // Free is rejected at the handler — `map_model` should never run.
+            let _ = ChatGptTier::Free.map_model("claude-opus-4-7");
+        }
+
+        #[test]
+        fn default_is_unknown() {
+            assert_eq!(ChatGptTier::default(), ChatGptTier::Unknown);
+        }
+
+        #[test]
+        fn extract_jwt_claims_reads_both_account_id_and_plan_type() {
+            use base64::Engine;
+            let payload = serde_json::json!({
+                "https://api.openai.com/auth": {
+                    "chatgpt_account_id": "acct_xyz",
+                    "chatgpt_plan_type": "pro"
+                }
+            });
+            let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(serde_json::to_vec(&payload).unwrap());
+            let jwt = format!("header.{b64}.signature");
+            let (acct, tier) = extract_jwt_claims(&jwt);
+            assert_eq!(acct.as_deref(), Some("acct_xyz"));
+            assert_eq!(tier, ChatGptTier::Pro);
+        }
+
+        #[test]
+        fn extract_jwt_claims_missing_plan_type_yields_unknown() {
+            use base64::Engine;
+            let payload = serde_json::json!({
+                "https://api.openai.com/auth": { "chatgpt_account_id": "acct" }
+            });
+            let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(serde_json::to_vec(&payload).unwrap());
+            let jwt = format!("h.{b64}.s");
+            let (acct, tier) = extract_jwt_claims(&jwt);
+            assert_eq!(acct.as_deref(), Some("acct"));
+            assert_eq!(tier, ChatGptTier::Unknown);
+        }
+
+        #[test]
+        fn extract_jwt_claims_malformed_token_yields_none_unknown() {
+            assert_eq!(extract_jwt_claims("not-a-jwt"),  (None, ChatGptTier::Unknown));
+            assert_eq!(extract_jwt_claims(""),           (None, ChatGptTier::Unknown));
+            assert_eq!(extract_jwt_claims("a.b.c"),      (None, ChatGptTier::Unknown));
+        }
+
+        #[test]
+        fn auth_state_deserializes_without_tier_field() {
+            // Old auth.json files (v0.1.x) had no `tier` field. They must still
+            // load, defaulting to Unknown.
+            let json = r#"{
+                "access_token":  "AT",
+                "refresh_token": "RT",
+                "expires_at":    9999999999,
+                "account_id":    "acct"
+            }"#;
+            let s: AuthState = serde_json::from_str(json).unwrap();
+            assert_eq!(s.tier, ChatGptTier::Unknown);
+        }
+
+        #[tokio::test]
+        async fn handler_rejects_free_tier_with_403_subscription_required() {
+            use std::time::Duration;
+
+            let state = super::test_state();
+            // No upstream needed — the handler must short-circuit on Free.
+            *state.auth.lock().await = Some(AuthState {
+                access_token: "AT".into(),
+                refresh_token: "RT".into(),
+                expires_at: SystemTime::now() + Duration::from_secs(3600),
+                account_id: None,
+                tier: ChatGptTier::Free,
+            });
+
+            let app = build_app(state);
+            let server = axum_test::TestServer::new(app);
+            let resp = server.post("/v1/messages")
+                .json(&serde_json::json!({
+                    "model": "claude-opus-4-7",
+                    "messages": [{ "role": "user", "content": "hi" }],
+                }))
+                .await;
+            assert_eq!(resp.status_code(), 403);
+            let body: Value = resp.json();
+            assert_eq!(body["error"]["type"], "subscription_required");
+            assert!(
+                body["error"]["message"].as_str().is_some_and(|s| s.contains("Detected: free")),
+                "message should mention detected tier: {body}"
+            );
+        }
     }
 }

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>claudeg — Claude Code on ChatGPT</title>
+<meta name="description" content="Run Claude Code through your ChatGPT subscription. A small Rust proxy.">
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='13' font-family='monospace' font-size='14'%3Ec%3C/text%3E%3C/svg%3E">
+</head>
+<body>
+<main>
+<p class="title">claudeg</p>
+<p class="tag">Run Claude Code through your ChatGPT subscription.</p>
+
+<section>
+<h2>Install</h2>
+<p>macOS / Linux</p>
+<pre><code>curl -fsSL https://claudeg.org/install.sh | sh</code></pre>
+<p>Windows / PowerShell</p>
+<pre><code>iwr -useb https://claudeg.org/install.ps1 | iex</code></pre>
+</section>
+
+<section>
+<h2>Use</h2>
+<pre><code>claudeg                  # interactive session, routed through ChatGPT
+claudeg "&lt;prompt&gt;"       # one-shot
+claudeg whoami           # show detected tier + active mapping
+claudeg logout           # forget token</code></pre>
+</section>
+
+<footer>
+<a href="https://github.com/tuantong/claudeg">GitHub</a> · MIT license
+</footer>
+</main>
+</body>
+</html>
