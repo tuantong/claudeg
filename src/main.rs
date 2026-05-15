@@ -884,7 +884,17 @@ impl AuthState {
 
     pub fn load_from(path: &Path) -> anyhow::Result<Self> {
         let s = std::fs::read_to_string(path)?;
-        Ok(serde_json::from_str(&s)?)
+        let mut state: Self = serde_json::from_str(&s)?;
+        // The JWT is the source of truth for tier/account_id. Old v0.1.x caches
+        // have no `tier` field, and the on-disk struct can drift from the live
+        // token; overwrite tier and back-fill account_id from the JWT so stale
+        // caches self-heal on load.
+        let (jwt_account_id, jwt_tier) = extract_jwt_claims(&state.access_token);
+        state.tier = jwt_tier;
+        if state.account_id.is_none() {
+            state.account_id = jwt_account_id;
+        }
+        Ok(state)
     }
 
     pub fn save_to(&self, path: &Path) -> anyhow::Result<()> {
@@ -2606,8 +2616,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("auth.json");
 
+        // `load_from` treats the JWT as the source of truth for tier and (when
+        // the on-disk struct lacks one) account_id, so the access_token must
+        // carry the claims we expect to read back.
+        let jwt = tier_tests::make_test_jwt("acct_42", "plus");
         let state = AuthState {
-            access_token: "AT".into(),
+            access_token: jwt.clone(),
             refresh_token: "RT".into(),
             expires_at: SystemTime::now() + Duration::from_secs(3600),
             account_id: Some("acct_42".into()),
@@ -2616,7 +2630,7 @@ mod tests {
         state.save_to(&path).unwrap();
 
         let loaded = AuthState::load_from(&path).unwrap();
-        assert_eq!(loaded.access_token, "AT");
+        assert_eq!(loaded.access_token, jwt);
         assert_eq!(loaded.refresh_token, "RT");
         assert_eq!(loaded.account_id.as_deref(), Some("acct_42"));
         assert_eq!(loaded.tier, ChatGptTier::Plus);
@@ -3337,6 +3351,45 @@ mod tests {
             }"#;
             let s: AuthState = serde_json::from_str(json).unwrap();
             assert_eq!(s.tier, ChatGptTier::Unknown);
+        }
+
+        /// Build a JWT whose payload carries the given (account_id, plan_type)
+        /// under the `https://api.openai.com/auth` namespace. Only the payload
+        /// segment is meaningful; the header/signature are placeholders.
+        pub(super) fn make_test_jwt(account_id: &str, plan_type: &str) -> String {
+            use base64::Engine;
+            let payload = serde_json::json!({
+                "https://api.openai.com/auth": {
+                    "chatgpt_account_id": account_id,
+                    "chatgpt_plan_type":  plan_type,
+                }
+            });
+            let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(serde_json::to_vec(&payload).unwrap());
+            format!("header.{b64}.signature")
+        }
+
+        #[test]
+        fn load_from_derives_tier_from_jwt_when_disk_missing_tier() {
+            // Regression: a v0.1.x auth.json has no `tier` field, but the cached
+            // access_token JWT carries `chatgpt_plan_type`. `load_from` must
+            // treat the JWT as the source of truth instead of defaulting to
+            // Unknown, so old caches self-heal on first run under v0.2.x.
+            let jwt = make_test_jwt("acct_jwt", "plus");
+            let json = format!(
+                r#"{{
+                    "access_token":  "{jwt}",
+                    "refresh_token": "RT",
+                    "expires_at":    9999999999
+                }}"#
+            );
+            let dir  = tempfile::tempdir().unwrap();
+            let path = dir.path().join("auth.json");
+            std::fs::write(&path, json).unwrap();
+
+            let s = AuthState::load_from(&path).unwrap();
+            assert_eq!(s.tier, ChatGptTier::Plus);
+            assert_eq!(s.account_id.as_deref(), Some("acct_jwt"));
         }
 
         #[tokio::test]
