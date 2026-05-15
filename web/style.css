@@ -53,6 +53,12 @@ h2 {
 
 p { margin: 0 0 0.5rem; }
 
+.note {
+  color: var(--muted);
+  font-size: 0.875rem;
+  margin: 0 0 1.25rem;
+}
+
 pre {
   background: var(--code-bg);
   padding: 0.75rem 1rem;
