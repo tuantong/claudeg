@@ -19,6 +19,8 @@ Run **Claude Code** through your **ChatGPT subscription**.
 
 ## Install
 
+> **Prerequisite:** Install [Claude Code](https://github.com/anthropics/claude-code) first — `npm install -g @anthropic-ai/claude-code` (requires Node 18+). `claudeg` invokes the `claude` CLI from PATH; it does not bundle it.
+
 **macOS / Linux:**
 
 ```sh
@@ -156,6 +158,7 @@ listen = "127.0.0.1:4000"
 
 | Symptom | Likely cause / fix |
 |---|---|
+| `claude: command not found` / `'claude' is not recognized` | Claude Code isn't installed. `claudeg` invokes the `claude` CLI from PATH — install it with `npm install -g @anthropic-ai/claude-code` ([repo](https://github.com/anthropics/claude-code)), then re-run. |
 | `Error: HTTP status client error (404 Not Found) for url (https://auth.openai.com/oauth/device/code)` | You're on an old build that used device-code. Reinstall via the one-liner. |
 | `HTTP 403 subscription_required` from claudeg | You're on the Free tier. claudeg requires Go ($8/mo) or higher. Run `claudeg whoami` to confirm. |
 | `claudeg: jwt missing chatgpt_plan_type — assuming plus tier` warning | OpenAI's OAuth backend occasionally omits the tier claim. claudeg uses the Plus mapping as a safe default; usually clears on next token refresh. |
@@ -163,7 +166,7 @@ listen = "127.0.0.1:4000"
 | `upstream 400: "Instructions are required"` | Anthropic request had no `system` field — claudeg sends a default. If you still see this, file an issue. |
 | `upstream 400: "Store must be set to false"` / `"Unsupported parameter: max_output_tokens"` | Codex backend protocol drift. Open an issue with the proxy log. |
 | Claude Code shows "Detected a custom API key" prompt every run | Run `claudeg setup` once — it pre-approves the sentinel value in `~/.claude.json`. |
-| Claude Code shows "Auth conflict" warning | Harmless. Both `claude.ai` token and `ANTHROPIC_API_KEY` are set; the env var wins for `claudeg`, the token wins for plain `claude`. |
+| `Auth conflict: Both a token (claude.ai) and an API key (ANTHROPIC_API_KEY) are set.` | **Harmless** when running through `claudeg` — ignore the warning and the two "Trying to use…?" suggestions. claudeg sets `ANTHROPIC_API_KEY` to its loopback sentinel so Claude Code routes to the proxy; if you've also logged into claude.ai in the same shell, both auth methods coexist. The env var wins for every `claudeg` invocation; the claude.ai token wins for plain `claude`. |
 | Port 4000 busy | `claudeg serve --port 5000` (foreground), or set `listen = "127.0.0.1:5000"` in `config.toml`. |
 
 ---
