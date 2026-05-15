@@ -8,11 +8,6 @@ on:
 permissions:
   contents: write
 
-# Opt every JS action (checkout, upload/download-artifact, action-gh-release …)
-# into the Node 24 runtime ahead of GitHub forcing it on 2026-06-02.
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   build:
     name: Build ${{ matrix.target }}
@@ -33,7 +28,7 @@ jobs:
             os: windows-2022
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -65,7 +60,7 @@ jobs:
           Compress-Archive -Path dist/claudeg.exe -DestinationPath dist/claudeg-${{ matrix.target }}.zip
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: claudeg-${{ matrix.target }}
           path: |
@@ -78,8 +73,8 @@ jobs:
     runs-on: ubuntu-22.04
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
       - name: Stage release files
@@ -90,7 +85,7 @@ jobs:
           cp scripts/install.ps1 release/
           ls -la release/
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: release/*
           generate_release_notes: true
