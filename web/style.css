@@ -1,18 +1,16 @@
 :root {
-  --bg: #fafafa;
-  --fg: #111;
-  --muted: #555;
-  --code-bg: #f0f0f0;
-  --link: #ff6600;
+  --bg: #fff;
+  --fg: #000;
+  --muted: #666;
+  --code-bg: #f2f2f2;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0f0f0f;
-    --fg: #eee;
+    --bg: #000;
+    --fg: #fff;
     --muted: #999;
     --code-bg: #1a1a1a;
-    --link: #ff8a3d;
   }
 }
 
@@ -27,7 +25,7 @@ html, body {
 }
 
 main {
-  max-width: 640px;
+  max-width: 760px;
   margin: 0 auto;
   padding: 4rem 1.25rem 3rem;
 }
@@ -74,10 +72,11 @@ code {
 }
 
 a {
-  color: var(--link);
-  text-decoration: none;
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
 }
-a:hover { text-decoration: underline; }
 
 footer {
   color: var(--muted);
