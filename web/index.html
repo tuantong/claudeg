@@ -3,14 +3,83 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>claudeg — Claude Code on ChatGPT</title>
-<meta name="description" content="Run Claude Code through your ChatGPT subscription. A small Rust proxy.">
+<title>claudeg — Run Claude Code through your ChatGPT subscription</title>
+<meta name="description" content="claudeg is an open-source Rust loopback proxy that lets you run Claude Code through your ChatGPT Plus, Pro, Business or Enterprise subscription. No separate Anthropic API key.">
+<link rel="canonical" href="https://claudeg.org/">
+
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://claudeg.org/">
+<meta property="og:title" content="claudeg — Run Claude Code through your ChatGPT subscription">
+<meta property="og:description" content="Open-source Rust proxy that routes Claude Code traffic through your ChatGPT subscription. No separate Anthropic API key.">
+<meta property="og:site_name" content="claudeg">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="claudeg — Run Claude Code through your ChatGPT subscription">
+<meta name="twitter:description" content="Open-source Rust proxy that routes Claude Code traffic through your ChatGPT subscription. No separate Anthropic API key.">
+
 <link rel="stylesheet" href="/style.css">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='13' font-family='monospace' font-size='14'%3Ec%3C/text%3E%3C/svg%3E">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "claudeg",
+      "url": "https://claudeg.org/",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "macOS, Linux, Windows",
+      "description": "Open-source Rust loopback proxy that translates Anthropic's Messages API to OpenAI's ChatGPT Codex API, so Claude Code can run on a ChatGPT Plus, Pro, Business or Enterprise subscription instead of a separate Anthropic API key.",
+      "license": "https://opensource.org/license/mit",
+      "programmingLanguage": "Rust",
+      "codeRepository": "https://github.com/tuantong/claudeg",
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "sameAs": ["https://github.com/tuantong/claudeg"]
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "What is claudeg?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "claudeg is an open-source Rust command-line tool and loopback proxy that lets you run Claude Code through your existing ChatGPT subscription. It translates Anthropic's Messages API into OpenAI's ChatGPT Codex API on 127.0.0.1, so Claude Code talks to the local proxy instead of api.anthropic.com."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does claudeg need an Anthropic API key?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. claudeg authenticates with ChatGPT via OAuth and routes every Claude Code request through your ChatGPT subscription. You do not need to pay for the Anthropic API separately."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Which ChatGPT plans does claudeg support?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "claudeg auto-detects your plan from the OAuth token and maps Claude models to ChatGPT models accordingly. Plus, Pro, Business and Enterprise are supported; Free is rejected because ChatGPT Free does not include API-grade access."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I install claudeg?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Install Claude Code first, then on macOS or Linux run: curl -fsSL https://claudeg.org/install.sh | sh — or on Windows PowerShell: iwr -useb https://claudeg.org/install.ps1 | iex. Then run `claudeg login` to authenticate with ChatGPT."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
 </head>
 <body>
 <main>
-<p class="title">claudeg</p>
+<h1 class="title">claudeg</h1>
 <p class="tag">Run Claude Code through your ChatGPT subscription.</p>
 
 <section>
