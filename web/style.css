@@ -71,7 +71,10 @@ code {
   line-height: 1.55;
 }
 
-a {
+a,
+a:visited,
+a:hover,
+a:active {
   color: inherit;
   text-decoration: underline;
   text-decoration-thickness: 1px;
