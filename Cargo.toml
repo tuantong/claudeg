@@ -1,6 +1,6 @@
 [package]
 name = "claudeg"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "Run Claude Code through your ChatGPT subscription. A loopback proxy that translates Anthropic Messages API to ChatGPT Codex."
 license = "MIT"
