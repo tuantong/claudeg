@@ -1,27 +1,33 @@
 # claudeg
 
-> claudeg is an open-source Rust command-line tool that lets you run Claude Code through your existing ChatGPT subscription. It is a loopback proxy on 127.0.0.1 that translates Anthropic's Messages API into OpenAI's ChatGPT Codex API, so Claude Code talks to the local proxy instead of api.anthropic.com. You do not need a separate Anthropic API key.
+> claudeg is an open-source Rust command-line tool that lets you run Claude Code through either an existing ChatGPT subscription (Plus / Pro / Business / Enterprise) or a free Google Gemini 3 Flash API key. It is a loopback proxy on 127.0.0.1 that translates Anthropic's Messages API into the chosen backend's wire format (OpenAI ChatGPT Codex Responses or Google Gemini generateContent), so Claude Code talks to the local proxy instead of api.anthropic.com. You do not need a separate Anthropic API key.
+
+## Backends
+
+- ChatGPT subscription — `claudeg login --chatgpt` runs OAuth PKCE in the browser. Auto-detects your tier from the JWT (`chatgpt_plan_type`) and picks the matching ChatGPT model for each Claude model. Plus, Pro, Business, Enterprise supported; Free is rejected.
+- Gemini 3 Flash (free) — `claudeg login --gemini` prompts for a Google AI Studio API key (or pass it via `--gemini-key <KEY>` for non-interactive use). All Claude models route to `gemini-flash-latest`. Free-tier limits apply: roughly 5–15 requests/minute and 100–1000 requests/day.
 
 ## How it works
 
-- `claudeg login` performs OAuth (PKCE) against ChatGPT and caches the token in the OS config directory.
-- Every Claude Code request is translated and forwarded to ChatGPT through the local proxy.
-- The Claude model in the request is auto-mapped to the appropriate ChatGPT model for your detected plan (Plus, Pro, Business, Enterprise).
-- Free tier is rejected because ChatGPT Free does not include API-grade access.
+- `claudeg login` shows an interactive picker (ChatGPT vs. Gemini), or skip with `--chatgpt` / `--gemini` / `--gemini-key`.
+- Credentials are cached in the OS config directory (`auth.json`, mode 0600 on Unix) with a `provider` discriminator so the proxy knows which path to take per request.
+- Every Claude Code request is translated and forwarded to the active backend through the local proxy.
+- Image inputs work on the ChatGPT path; the Gemini path is text + tool use only in this release.
 
 ## Quick start
 
 - macOS / Linux: `curl -fsSL https://claudeg.org/install.sh | sh`
 - Windows / PowerShell: `iwr -useb https://claudeg.org/install.ps1 | iex`
-- After install: `claudeg login`, then `claudeg` to start an interactive session.
+- After install: `claudeg login` to pick a backend, then `claudeg` to start an interactive session.
 
 ## Commands
 
-- `claudeg` — interactive Claude Code session routed through ChatGPT
+- `claudeg` — interactive Claude Code session routed through the active backend
 - `claudeg "<prompt>"` — one-shot prompt
-- `claudeg login` — OAuth login with ChatGPT
-- `claudeg whoami` — show detected ChatGPT tier and the Claude → ChatGPT model mapping
-- `claudeg logout` — forget the cached OAuth token and stop the proxy
+- `claudeg login` — pick a backend interactively (ChatGPT subscription or Gemini 3 Flash)
+- `claudeg login --chatgpt` / `--gemini` / `--gemini-key <KEY>` — skip the picker
+- `claudeg whoami` — show active backend and the Claude → backend model mapping
+- `claudeg logout` — forget cached credentials and stop the proxy
 - `claudeg setup` — register an auto-start service and pre-approve the loopback API key
 - `claudeg serve [--port N]` — run the proxy in the foreground (advanced)
 

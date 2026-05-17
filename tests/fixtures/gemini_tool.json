@@ -1,0 +1,32 @@
+{
+  "contents": [
+    { "role": "user", "parts": [{ "text": "Read foo.txt" }] },
+    {
+      "role": "model",
+      "parts": [
+        { "text": "Reading the file." },
+        { "functionCall": { "name": "Read", "args": { "path": "foo.txt" } } }
+      ]
+    },
+    {
+      "role": "user",
+      "parts": [
+        { "functionResponse": { "name": "Read", "response": { "content": "hello world" } } }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "functionDeclarations": [
+        {
+          "name": "Read",
+          "description": "Read a file",
+          "parameters": { "type": "object", "properties": { "path": { "type": "string" } }, "required": ["path"] }
+        }
+      ]
+    }
+  ],
+  "generationConfig": {
+    "maxOutputTokens": 1024
+  }
+}

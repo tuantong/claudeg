@@ -1,8 +1,8 @@
 [package]
 name = "claudeg"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
-description = "Run Claude Code through your ChatGPT subscription. A loopback proxy that translates Anthropic Messages API to ChatGPT Codex."
+description = "Run Claude Code through a ChatGPT subscription or a free Gemini 3 Flash API key. A loopback proxy that translates Anthropic's Messages API to ChatGPT Codex or Google Gemini."
 license = "MIT"
 
 [dependencies]
@@ -25,6 +25,7 @@ url                = "2"
 base64             = "0.22"
 sha2               = "0.10"
 rand               = "0.8"
+rpassword          = "7"
 
 [dev-dependencies]
 wiremock           = "0.6"

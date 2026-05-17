@@ -3,18 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>claudeg — Run Claude Code through your ChatGPT subscription</title>
-<meta name="description" content="claudeg is an open-source Rust loopback proxy that lets you run Claude Code through your ChatGPT Plus, Pro, Business or Enterprise subscription. No separate Anthropic API key.">
+<title>claudeg — Run Claude Code through a ChatGPT subscription or free Gemini 3 Flash</title>
+<meta name="description" content="claudeg is an open-source Rust loopback proxy that lets you run Claude Code through your ChatGPT Plus/Pro/Business/Enterprise subscription, or through a free Gemini 3 Flash API key. No separate Anthropic API key.">
 <link rel="canonical" href="https://claudeg.org/">
 
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://claudeg.org/">
-<meta property="og:title" content="claudeg — Run Claude Code through your ChatGPT subscription">
-<meta property="og:description" content="Open-source Rust proxy that routes Claude Code traffic through your ChatGPT subscription. No separate Anthropic API key.">
+<meta property="og:title" content="claudeg — Run Claude Code through ChatGPT or free Gemini 3 Flash">
+<meta property="og:description" content="Open-source Rust proxy that routes Claude Code traffic through your ChatGPT subscription or a free Gemini 3 Flash key. No separate Anthropic API key.">
 <meta property="og:site_name" content="claudeg">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="claudeg — Run Claude Code through your ChatGPT subscription">
-<meta name="twitter:description" content="Open-source Rust proxy that routes Claude Code traffic through your ChatGPT subscription. No separate Anthropic API key.">
+<meta name="twitter:title" content="claudeg — Run Claude Code through ChatGPT or free Gemini 3 Flash">
+<meta name="twitter:description" content="Open-source Rust proxy that routes Claude Code traffic through your ChatGPT subscription or a free Gemini 3 Flash key. No separate Anthropic API key.">
 
 <link rel="stylesheet" href="/style.css">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='13' font-family='monospace' font-size='14'%3Ec%3C/text%3E%3C/svg%3E">
@@ -29,7 +29,7 @@
       "url": "https://claudeg.org/",
       "applicationCategory": "DeveloperApplication",
       "operatingSystem": "macOS, Linux, Windows",
-      "description": "Open-source Rust loopback proxy that translates Anthropic's Messages API to OpenAI's ChatGPT Codex API, so Claude Code can run on a ChatGPT Plus, Pro, Business or Enterprise subscription instead of a separate Anthropic API key.",
+      "description": "Open-source Rust loopback proxy that translates Anthropic's Messages API to either OpenAI's ChatGPT Codex API or Google's Gemini API, so Claude Code can run through a ChatGPT subscription (Plus, Pro, Business, Enterprise) or a free Gemini 3 Flash API key instead of a separate Anthropic API key.",
       "license": "https://opensource.org/license/mit",
       "programmingLanguage": "Rust",
       "codeRepository": "https://github.com/tuantong/claudeg",
@@ -44,7 +44,15 @@
           "name": "What is claudeg?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "claudeg is an open-source Rust command-line tool and loopback proxy that lets you run Claude Code through your existing ChatGPT subscription. It translates Anthropic's Messages API into OpenAI's ChatGPT Codex API on 127.0.0.1, so Claude Code talks to the local proxy instead of api.anthropic.com."
+            "text": "claudeg is an open-source Rust command-line tool and loopback proxy that lets you run Claude Code through either an existing ChatGPT subscription or a free Google Gemini 3 Flash API key. It translates Anthropic's Messages API into the chosen backend's wire format on 127.0.0.1, so Claude Code talks to the local proxy instead of api.anthropic.com."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Which backends does claudeg support?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Two: a ChatGPT subscription (Plus, Pro, Business, or Enterprise — via browser OAuth) or Gemini 3 Flash (free — via a Google AI Studio API key). You pick one at `claudeg login` time and can switch any time by running `claudeg logout` and `claudeg login` again."
           }
         },
         {
@@ -52,7 +60,15 @@
           "name": "Does claudeg need an Anthropic API key?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "No. claudeg authenticates with ChatGPT via OAuth and routes every Claude Code request through your ChatGPT subscription. You do not need to pay for the Anthropic API separately."
+            "text": "No. claudeg authenticates with either ChatGPT (OAuth) or Gemini (API key) and routes every Claude Code request through that backend. You do not need to pay for the Anthropic API separately."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I get a free Gemini API key?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Visit https://aistudio.google.com/apikey, click 'Create API key', then run `claudeg login --gemini` and paste the key. Input is hidden and the key is validated against Google before being saved at ~/Library/Application Support/claudeg/auth.json (mode 0600 on Unix)."
           }
         },
         {
@@ -60,7 +76,7 @@
           "name": "Which ChatGPT plans does claudeg support?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "claudeg auto-detects your plan from the OAuth token and maps Claude models to ChatGPT models accordingly. Plus, Pro, Business and Enterprise are supported; Free is rejected because ChatGPT Free does not include API-grade access."
+            "text": "claudeg auto-detects your plan from the OAuth token and maps Claude models to ChatGPT models accordingly. Plus, Pro, Business and Enterprise are supported; Free is rejected because ChatGPT Free does not include API-grade access. The Gemini backend has no such restriction — it runs on the free Gemini 3 Flash key."
           }
         },
         {
@@ -68,7 +84,7 @@
           "name": "How do I install claudeg?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Install Claude Code first, then on macOS or Linux run: curl -fsSL https://claudeg.org/install.sh | sh — or on Windows PowerShell: iwr -useb https://claudeg.org/install.ps1 | iex. Then run `claudeg login` to authenticate with ChatGPT."
+            "text": "Install Claude Code first, then on macOS or Linux run: curl -fsSL https://claudeg.org/install.sh | sh — or on Windows PowerShell: iwr -useb https://claudeg.org/install.ps1 | iex. Then run `claudeg login` to pick a backend (ChatGPT subscription or Gemini 3 Flash) and authenticate."
           }
         }
       ]
@@ -80,7 +96,7 @@
 <body>
 <main>
 <h1 class="title">claudeg</h1>
-<p class="tag">Run Claude Code through your ChatGPT subscription.</p>
+<p class="tag">Run Claude Code through a ChatGPT subscription or a free Gemini 3 Flash key.</p>
 
 <section>
 <h2>Install</h2>
@@ -92,11 +108,30 @@
 </section>
 
 <section>
+<h2>Choose a backend</h2>
+<p class="note">After install, run <code>claudeg login</code>. You'll be asked to pick one:</p>
+<div class="backends">
+  <article class="backend-card">
+    <h3>ChatGPT subscription</h3>
+    <p class="backend-meta">Plus / Pro / Business / Enterprise · browser OAuth</p>
+    <p>Auto-detects your tier from the OAuth JWT and picks the right ChatGPT model for each Claude model.</p>
+    <pre><code>claudeg login --chatgpt</code></pre>
+  </article>
+  <article class="backend-card">
+    <h3>Gemini 3 Flash <span class="badge">free</span></h3>
+    <p class="backend-meta">Google AI Studio key · ~5–15 RPM, 100–1000 RPD</p>
+    <p>Paste a key from <a href="https://aistudio.google.com/apikey">aistudio.google.com/apikey</a>. All Claude models route to <code>gemini-flash-latest</code>.</p>
+    <pre><code>claudeg login --gemini</code></pre>
+  </article>
+</div>
+</section>
+
+<section>
 <h2>Use</h2>
-<pre><code>claudeg              # interactive session via ChatGPT
+<pre><code>claudeg              # interactive session via the active backend
 claudeg "&lt;prompt&gt;"   # one-shot
-claudeg whoami       # show detected tier + active mapping
-claudeg logout       # forget token</code></pre>
+claudeg whoami       # show active backend + model mapping
+claudeg logout       # forget cached credentials</code></pre>
 </section>
 
 <footer>

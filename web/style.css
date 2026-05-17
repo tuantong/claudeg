@@ -81,6 +81,58 @@ a:active {
   text-underline-offset: 2px;
 }
 
+.backends {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 1rem 0 1.25rem;
+}
+
+.backend-card {
+  border: 1px solid var(--code-bg);
+  border-radius: 6px;
+  padding: 1rem 1.1rem 0.75rem;
+}
+
+.backend-card h3 {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  margin: 0 0 0.4rem;
+}
+
+.backend-card .backend-meta {
+  color: var(--muted);
+  font-size: 0.8125rem;
+  margin: 0 0 0.65rem;
+}
+
+.backend-card p {
+  font-size: 0.9375rem;
+  margin: 0 0 0.65rem;
+}
+
+.backend-card pre {
+  margin-bottom: 0;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.05em 0.45em;
+  margin-left: 0.3em;
+  border: 1px solid var(--muted);
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  vertical-align: middle;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+@media (max-width: 560px) {
+  .backends { grid-template-columns: 1fr; }
+}
+
 footer {
   color: var(--muted);
   font-size: 0.875rem;
